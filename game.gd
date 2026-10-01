@@ -207,7 +207,7 @@ func _process(delta: float) -> void:
 		else:
 			movement = to_target.normalized()
 	if movement != Vector2.ZERO and stamina > 0:
-		var step := delta * (2.4 + stats["민첩"] * 0.18)
+		var step: float = delta * (2.4 + float(stats["민첩"]) * 0.18)
 		if click_move_active:
 			var remaining := move_target.distance_to(hero)
 			if remaining <= step:
@@ -311,8 +311,9 @@ func _draw() -> void:
 			drawables.append({"depth": p.x + p.y + size.x + size.y - 1, "type": "building", "data": building})
 	for zombie in zombies:
 		# Monsters outside the actual world-space lantern radius are fully concealed.
-		if zombie.distance_to(hero) <= VISION_TILES:
-			drawables.append({"depth": zombie.x + zombie.y, "type": "zombie", "data": zombie})
+		var zombie_position: Vector2 = zombie.position
+		if zombie_position.distance_to(hero) <= VISION_TILES:
+			drawables.append({"depth": zombie_position.x + zombie_position.y, "type": "zombie", "data": zombie})
 	drawables.append({"depth": hero.x + hero.y, "type": "hero", "data": hero})
 	drawables.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.depth < b.depth)
 	for item in drawables:
@@ -326,11 +327,11 @@ func _draw() -> void:
 	draw_damage_numbers()
 	if click_move_active:
 		var marker := map_pixel(move_target)
-		draw_ellipse(marker, Vector2(8, 4), Color(0.84, 0.76, 0.46, 0.5))
+		draw_shadow_ellipse(marker, Vector2(8, 4), Color(0.84, 0.76, 0.46, 0.5))
 		draw_line(marker + Vector2(-8, 0), marker + Vector2(8, 0), Color("e5d192", 0.8), 1)
 
 func draw_prop(center: Vector2, kind: String) -> void:
-	draw_ellipse(center + Vector2(0, 5), Vector2(13, 5), Color(0.04, 0.055, 0.05, 0.65))
+	draw_shadow_ellipse(center + Vector2(0, 5), Vector2(13, 5), Color(0.04, 0.055, 0.05, 0.65))
 	match kind:
 		"tree":
 			draw_rect(Rect2(center + Vector2(-3, -15), Vector2(7, 19)), Color("443c31"))
@@ -356,7 +357,7 @@ func draw_building(building: Dictionary) -> void:
 	var height := 24.0 + size.y * 2.0
 	var top := PackedVector2Array()
 	for point in base: top.append(point + Vector2(0, -height))
-	draw_ellipse((base[2] + base[3]) * 0.5 + Vector2(0, 6), Vector2(size.x * 17.0, 11), Color(0.04, 0.05, 0.045, 0.75))
+	draw_shadow_ellipse((base[2] + base[3]) * 0.5 + Vector2(0, 6), Vector2(size.x * 17.0, 11), Color(0.04, 0.05, 0.045, 0.75))
 	draw_colored_polygon(PackedVector2Array([base[1], base[2], top[2], top[1]]), building_color.darkened(0.32))
 	draw_colored_polygon(PackedVector2Array([base[2], base[3], top[3], top[2]]), building_color.darkened(0.18))
 	draw_colored_polygon(top, building_color)
@@ -370,7 +371,7 @@ func draw_building(building: Dictionary) -> void:
 		draw_rect(Rect2(tower_base + Vector2(-2, -50), Vector2(4, 8)), Color("94624f"))
 
 func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_data: Dictionary) -> void:
-	draw_ellipse(center + Vector2(0, 5), Vector2(11, 4), Color(0.025, 0.03, 0.025, 0.9))
+	draw_shadow_ellipse(center + Vector2(0, 5), Vector2(11, 4), Color(0.025, 0.03, 0.025, 0.9))
 	if player:
 		# Muted workwear, layered cloth, a field pack and small face details read as a survivor at game scale.
 		draw_rect(Rect2(center + Vector2(6, -17), Vector2(5, 10)), Color("443b31"))
@@ -453,7 +454,7 @@ func draw_damage_numbers() -> void:
 		draw_string_outline(ThemeDB.fallback_font, position, label, HORIZONTAL_ALIGNMENT_CENTER, 42, 14, 3, Color("25211e"))
 		draw_string(ThemeDB.fallback_font, position, label, HORIZONTAL_ALIGNMENT_CENTER, 42, 14, color)
 
-func draw_ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
+func draw_shadow_ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
 	var points := PackedVector2Array()
 	for i in range(12):
 		var angle := TAU * float(i) / 12.0
