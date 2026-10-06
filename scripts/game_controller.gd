@@ -10,6 +10,7 @@ var camera_at := Vector2.ZERO
 var stats := {"힘": 1, "민첩": 1, "지능": 1}
 var xp := {"힘": 0, "민첩": 0, "지능": 0}
 var hp := 100
+var medkits := 1
 var stamina := 100.0
 var food := 4
 var scrap := 5
@@ -27,6 +28,7 @@ var click_move_active := false
 var active_weapon := "쇠파이프"
 var damage_numbers: Array[Dictionary] = []
 var hit_effects: Array[Dictionary] = []
+var loot_drops: Array[Dictionary] = []
 var held_direction := Vector2.ZERO
 var held_direction_time := 0.0
 var running := false
@@ -44,16 +46,19 @@ var region_coords := Vector2i.ZERO
 var region_states: Dictionary = {}
 var dark_material: ShaderMaterial
 var world_renderer: Node2D
+var ground_renderer: Node2D
 var combat: Node
 var hud: CanvasLayer
 
 func _ready() -> void:
 	world_renderer = get_node("WorldRenderer") as Node2D
+	ground_renderer = get_node("GroundRenderer") as Node2D
 	combat = get_node("CombatSystem") as Node
 	hud = get_node("HUD") as CanvasLayer
 	hud.call("setup", self)
 	combat.call("setup", self)
 	world_renderer.call("setup", self)
+	ground_renderer.call("setup", self)
 	seed(802)
 	aim_world = hero + Vector2(1, 0)
 	for i in range(26):
@@ -165,6 +170,8 @@ func map_pixel(point: Vector2) -> Vector2:
 func update_camera() -> void:
 	var view := get_viewport_rect().size
 	camera_at = project_world(hero) - view * 0.5
+	if ground_renderer:
+		ground_renderer.position = -camera_at
 	if dark_material:
 		dark_material.set_shader_parameter("light_center", (project_world(hero) - camera_at) / view)
 		dark_material.set_shader_parameter("view_size", view)
@@ -187,6 +194,9 @@ func _process(delta: float) -> void:
 	for i in range(hit_effects.size() - 1, -1, -1):
 		hit_effects[i].time_left -= delta
 		if hit_effects[i].time_left <= 0: hit_effects.remove_at(i)
+	for i in range(loot_drops.size() - 1, -1, -1):
+		if loot_drops[i].position.distance_to(hero) <= 0.75:
+			_collect_drop(i)
 	var keyboard_move := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): keyboard_move.x -= 1
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): keyboard_move.x += 1
@@ -291,6 +301,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			KEY_4: combat.call("equip_weapon", "권총")
 			KEY_5: combat.call("equip_weapon", "활")
 			KEY_R: combat.call("reload_weapon")
+			KEY_H: use_medicine()
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
@@ -334,6 +345,31 @@ func farm() -> void:
 	if randf() < 0.25: ammo_reserve["화살"] += randi_range(1, 3)
 	gain("민첩", 12)
 	say("폐허 파밍 완료 · 식량 +1, 고철 +1. 탄약이나 화살도 찾았을 수 있다. 민첩 경험치 +12.")
+	update_ui()
+
+func _collect_drop(index: int) -> void:
+	var drop: Dictionary = loot_drops[index]
+	var amount: int = int(drop.amount)
+	match String(drop.kind):
+		"고철": scrap += amount
+		"식량": food += amount
+		"탄약": ammo_reserve["탄약"] += amount
+		"화살": ammo_reserve["화살"] += amount
+		"의약품": medkits += amount
+	loot_drops.remove_at(index)
+	say("아이템 획득 · %s x%d" % [drop.kind, amount])
+	update_ui()
+
+func use_medicine() -> void:
+	if medkits <= 0:
+		say("보유한 의약품이 없다.")
+		return
+	if hp >= 100:
+		say("체력이 가득 차 있다.")
+		return
+	medkits -= 1
+	hp = mini(100, hp + 35)
+	say("응급 의약품을 사용했다. 체력 +35.")
 	update_ui()
 
 func build() -> void:
