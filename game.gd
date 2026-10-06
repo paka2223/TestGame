@@ -4,6 +4,10 @@ const TILE := 32.0
 const MAP_W := 54
 const MAP_H := 42
 const VISION_TILES := 8.0
+const WALK_SPEED := 1.35
+const RUN_SPEED := 3.2
+const RUN_TRIGGER_SECONDS := 2.0
+const SWING_DURATION := 0.28
 const WEAPONS := {
 	"부엌칼": {"min": 7, "max": 13, "range": 1.35, "cooldown": 0.34, "crit": 0.12, "crit_mult": 1.8, "length": 10, "color": Color("bbc4c1")},
 	"쇠파이프": {"min": 12, "max": 21, "range": 1.9, "cooldown": 0.58, "crit": 0.08, "crit_mult": 1.7, "length": 16, "color": Color("858e90")},
@@ -38,10 +42,16 @@ var move_target := Vector2.ZERO
 var click_move_active := false
 var active_weapon := "쇠파이프"
 var damage_numbers: Array[Dictionary] = []
+var hit_effects: Array[Dictionary] = []
+var held_direction := Vector2.ZERO
+var held_direction_time := 0.0
+var running := false
+var aim_screen := Vector2.ZERO
 var dark_material: ShaderMaterial
 var status_label: Label
 var mission_label: Label
 var weapon_label: Label
+var minimap_view: Control
 
 func _ready() -> void:
 	seed(802)
@@ -86,7 +96,7 @@ func make_ui() -> void:
 	mission_label.add_theme_color_override("font_color", Color("d8d3b9"))
 	ui.add_child(mission_label)
 	var hint := Label.new()
-	hint.text = "우클릭 이동  ·  좌클릭 공격\nWASD/방향키도 사용 가능  ·  E 상호작용"
+	hint.text = "우클릭 이동  ·  좌클릭 공격\n같은 방향 2초 유지 → 달리기  ·  E 상호작용"
 	hint.add_theme_color_override("font_color", Color("aeb8a6"))
 	ui.add_child(hint)
 	for stat in ["힘", "민첩", "지능"]:
@@ -110,7 +120,50 @@ func make_ui() -> void:
 	add_button(actions, "파밍 [F]", farm)
 	add_button(actions, "건설 [B]", build)
 	add_button(ui, "도움말 / 목표", func(): say("서울역·남산타워·시청을 탐험하세요. 어둠 속에서는 빛 안에 들어온 좀비만 보입니다."))
+	var minimap_frame := PanelContainer.new()
+	minimap_frame.anchor_left = 1.0
+	minimap_frame.anchor_right = 1.0
+	minimap_frame.offset_left = -204
+	minimap_frame.offset_right = -14
+	minimap_frame.offset_top = 14
+	minimap_frame.offset_bottom = 214
+	layer.add_child(minimap_frame)
+	var minimap_stack := VBoxContainer.new()
+	minimap_frame.add_child(minimap_stack)
+	var minimap_title := Label.new()
+	minimap_title.text = "서울 · 주변 지도"
+	minimap_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	minimap_title.add_theme_color_override("font_color", Color("ebc982"))
+	minimap_stack.add_child(minimap_title)
+	minimap_view = Control.new()
+	minimap_view.custom_minimum_size = Vector2(174, 164)
+	minimap_view.mouse_filter = Control.MOUSE_FILTER_STOP
+	minimap_view.draw.connect(_draw_minimap.bind(minimap_view))
+	minimap_stack.add_child(minimap_view)
 	update_ui()
+
+func _draw_minimap(canvas: Control) -> void:
+	var size := canvas.size
+	canvas.draw_rect(Rect2(Vector2.ZERO, size), Color("202925"))
+	var road_x := size.x * 16.5 / MAP_W
+	var road_y := size.y * 19.5 / MAP_H
+	canvas.draw_rect(Rect2(Vector2(road_x - 3, 0), Vector2(6, size.y)), Color("484c47"))
+	canvas.draw_rect(Rect2(Vector2(0, road_y - 3), Vector2(size.x, 6)), Color("484c47"))
+	for building in buildings:
+		var p: Vector2 = building.p
+		var marker := Vector2(p.x / MAP_W * size.x, p.y / MAP_H * size.y)
+		canvas.draw_rect(Rect2(marker - Vector2(2, 2), Vector2(4, 4)), Color("bc995d"))
+	for zombie in zombies:
+		var p: Vector2 = zombie.position
+		if p.distance_to(hero) > VISION_TILES: continue
+		var marker := Vector2(p.x / MAP_W * size.x, p.y / MAP_H * size.y)
+		canvas.draw_circle(marker, 2.5, Color("c85348"))
+	var hero_marker := Vector2(hero.x / MAP_W * size.x, hero.y / MAP_H * size.y)
+	canvas.draw_circle(hero_marker, 4.0, Color("f0e4b8"))
+	canvas.draw_arc(hero_marker, 7.0, 0.0, TAU, 24, Color("e4d19b", 0.7), 1.0)
+	if click_move_active:
+		var target_marker := Vector2(move_target.x / MAP_W * size.x, move_target.y / MAP_H * size.y)
+		canvas.draw_circle(target_marker, 3.0, Color("9dbb76"))
 
 func spawn_zombie(spawn_at: Vector2) -> void:
 	var runner := randf() < 0.28
@@ -192,14 +245,35 @@ func _process(delta: float) -> void:
 	for i in range(damage_numbers.size() - 1, -1, -1):
 		damage_numbers[i].time_left -= delta
 		if damage_numbers[i].time_left <= 0: damage_numbers.remove_at(i)
+	for i in range(hit_effects.size() - 1, -1, -1):
+		hit_effects[i].time_left -= delta
+		if hit_effects[i].time_left <= 0: hit_effects.remove_at(i)
+	var keyboard_move := Vector2.ZERO
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): keyboard_move.x -= 1
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): keyboard_move.x += 1
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): keyboard_move.y -= 1
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): keyboard_move.y += 1
 	var movement := Vector2.ZERO
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): movement.x -= 1
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): movement.x += 1
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1
-	if movement != Vector2.ZERO and stamina > 0:
+	var keyboard_control := keyboard_move != Vector2.ZERO
+	if keyboard_control:
+		keyboard_move = keyboard_move.normalized()
+		if not running:
+			if keyboard_move.is_equal_approx(held_direction):
+				held_direction_time += delta
+			else:
+				held_direction = keyboard_move
+				held_direction_time = 0.0
+			if held_direction_time >= RUN_TRIGGER_SECONDS:
+				running = true
+		else:
+			held_direction = keyboard_move
+		movement = keyboard_move
+	else:
+		running = false
+		held_direction = Vector2.ZERO
+		held_direction_time = 0.0
+	if keyboard_control and stamina > 0:
 		click_move_active = false
-		movement = movement.normalized()
 	elif click_move_active:
 		var to_target := move_target - hero
 		if to_target.length() < 0.12:
@@ -207,7 +281,9 @@ func _process(delta: float) -> void:
 		else:
 			movement = to_target.normalized()
 	if movement != Vector2.ZERO and stamina > 0:
-		var step: float = delta * (2.4 + float(stats["민첩"]) * 0.18)
+		var move_speed: float = RUN_SPEED if keyboard_control and running else WALK_SPEED
+		move_speed += float(stats["민첩"] - 1) * 0.10
+		var step: float = delta * move_speed
 		if click_move_active:
 			var remaining := move_target.distance_to(hero)
 			if remaining <= step:
@@ -217,10 +293,11 @@ func _process(delta: float) -> void:
 				hero += movement * step
 		else:
 			hero += movement * step
-		stamina = maxf(0, stamina - delta * 3.4 / maxf(1, stats["민첩"]))
+		stamina = maxf(0, stamina - delta * (8.0 if keyboard_control and running else 1.0) / maxf(1, stats["민첩"]))
 	hero.x = clampf(hero.x, 1, MAP_W - 2)
 	hero.y = clampf(hero.y, 1, MAP_H - 2)
 	update_camera()
+	if minimap_view: minimap_view.queue_redraw()
 	if sim_clock >= 0.2:
 		var zombie_step := sim_clock
 		sim_clock = 0
@@ -261,8 +338,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
+		aim_screen = event.position
 		aim_world = screen_to_world(event.position)
 	elif event is InputEventMouseButton and event.pressed:
+		aim_screen = event.position
 		var world_target := screen_to_world(event.position)
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			move_target = Vector2(clampf(world_target.x, 1, MAP_W - 2), clampf(world_target.y, 1, MAP_H - 2))
@@ -324,6 +403,7 @@ func _draw() -> void:
 				draw_character(map_pixel(item.data.position), false, item.data.kind, item.data)
 			"hero": draw_character(map_pixel(item.data), true, "", {})
 	draw_attack_indicator()
+	draw_hit_effects()
 	draw_damage_numbers()
 	if click_move_active:
 		var marker := map_pixel(move_target)
@@ -389,7 +469,10 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 	if player:
 		var weapon: Dictionary = WEAPONS[active_weapon]
 		var hand := center + Vector2(7, -24)
-		var screen_direction := project_world(hero + attack_direction) - project_world(hero)
+		var swing_progress := 1.0 - clampf(swing_timer / SWING_DURATION, 0.0, 1.0)
+		var swing_angle := attack_direction.angle() + (lerpf(-0.85, 0.85, swing_progress) if swing_timer > 0 else 0.0)
+		var swing_direction := Vector2(cos(swing_angle), sin(swing_angle))
+		var screen_direction := project_world(hero + swing_direction) - project_world(hero)
 		var weapon_vector := screen_direction.normalized() * float(weapon.length)
 		var weapon_end := hand + weapon_vector
 		if active_weapon == "각목":
@@ -401,6 +484,15 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 		else:
 			draw_line(hand, hand + weapon_vector * 0.45, Color("51443a"), 3)
 			draw_line(hand + weapon_vector * 0.45, weapon_end, weapon.color, 2)
+		if swing_timer > 0:
+			var trail_color := Color(0.93, 0.82, 0.59, clampf(swing_timer / SWING_DURATION, 0.0, 1.0) * 0.85)
+			var trail_center := center + Vector2(0, -23)
+			var trail_points := PackedVector2Array()
+			for arc_index in range(9):
+				var angle := swing_angle - 0.46 + 0.92 * float(arc_index) / 8.0
+				var arc_dir := Vector2(cos(angle), sin(angle))
+				trail_points.append(trail_center + (project_world(hero + arc_dir) - project_world(hero)).normalized() * float(weapon.length + 6))
+			draw_polyline(trail_points, trail_color, 2.0)
 	if not player:
 		var runner := zombie_kind == "러너"
 		var shirt := Color("4e493d") if not runner else Color("50453f")
@@ -454,6 +546,17 @@ func draw_damage_numbers() -> void:
 		draw_string_outline(ThemeDB.fallback_font, position, label, HORIZONTAL_ALIGNMENT_CENTER, 42, 14, 3, Color("25211e"))
 		draw_string(ThemeDB.fallback_font, position, label, HORIZONTAL_ALIGNMENT_CENTER, 42, 14, color)
 
+func draw_hit_effects() -> void:
+	for effect in hit_effects:
+		var progress := 1.0 - clampf(float(effect.time_left) / 0.28, 0.0, 1.0)
+		var center := map_pixel(effect.position) + Vector2(0, -4)
+		var color := Color("ffe194") if effect.critical else Color("f5e7c8")
+		color.a = 1.0 - progress
+		var radius := 5.0 + progress * 11.0
+		draw_arc(center, radius, 0, TAU, 20, color, 2.0)
+		draw_line(center + Vector2(-4, -4), center + Vector2(4, 4), color, 2.0)
+		draw_line(center + Vector2(-4, 4), center + Vector2(4, -4), color, 2.0)
+
 func draw_shadow_ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
 	var points := PackedVector2Array()
 	for i in range(12):
@@ -465,18 +568,28 @@ func attack() -> void:
 	if attack_cooldown > 0: return
 	var weapon: Dictionary = WEAPONS[active_weapon]
 	attack_cooldown = float(weapon.cooldown)
-	swing_timer = 0.25
+	swing_timer = SWING_DURATION
 	attack_direction = (aim_world - hero).normalized()
 	if attack_direction == Vector2.ZERO: attack_direction = Vector2.RIGHT
 	var best := -1
 	var nearest := float(weapon.range)
+	var cursor_best := -1
+	var cursor_error := 27.0
 	for i in range(zombies.size()):
 		var offset: Vector2 = zombies[i].position - hero
 		var distance := offset.length()
-		if distance > nearest or distance <= 0.001: continue
-		if offset.normalized().dot(attack_direction) < 0.38: continue
-		nearest = distance
-		best = i
+		if distance > float(weapon.range) or distance <= 0.001: continue
+		var zombie_screen := map_pixel(zombies[i].position) + Vector2(0, -27)
+		var pointer_distance := aim_screen.distance_to(zombie_screen)
+		if pointer_distance < cursor_error:
+			cursor_error = pointer_distance
+			cursor_best = i
+		if offset.normalized().dot(attack_direction) >= 0.38 and distance < nearest:
+			nearest = distance
+			best = i
+	if cursor_best >= 0:
+		best = cursor_best
+		attack_direction = (zombies[best].position - hero).normalized()
 	if best >= 0:
 		var zombie: Dictionary = zombies[best]
 		var amount := randi_range(int(weapon.min), int(weapon.max))
@@ -485,6 +598,7 @@ func attack() -> void:
 		amount = maxi(1, int(round(amount * (1.0 + maxf(0, stats["힘"] - 1) * 0.12))))
 		zombie.hp -= amount
 		damage_numbers.append({"position": zombie.position, "amount": amount, "critical": critical, "time_left": 1.0})
+		hit_effects.append({"position": zombie.position, "critical": critical, "time_left": 0.28})
 		if zombie.hp <= 0:
 			zombies.remove_at(best)
 			gain("힘", 24)
@@ -564,7 +678,7 @@ func update_ui() -> void:
 	if not status_label: return
 	var role := ""
 	if stats["지능"] >= 3: role = "\n전문: 응급처치·차량수리·건설"
-	status_label.text = "HP %d/100  ·  기력 %d/100\n힘 %d  민첩 %d  지능 %d%s\n식량 %d  ·  고철 %d  ·  좀비 %d" % [hp, int(stamina), stats["힘"], stats["민첩"], stats["지능"], role, food, scrap, zombies.size()]
+	status_label.text = "HP %d/100  ·  기력 %d/100\n힘 %d  민첩 %d  지능 %d%s\n%s  ·  식량 %d  고철 %d  좀비 %d" % [hp, int(stamina), stats["힘"], stats["민첩"], stats["지능"], role, "달리기" if running else "걷기", food, scrap, zombies.size()]
 	if weapon_label:
 		var weapon: Dictionary = WEAPONS[active_weapon]
 		weapon_label.text = "장비: %s  피해 %d-%d\n사거리 %.2fm · 속도 %.2fs · 치명타 %d%%" % [active_weapon, weapon.min, weapon.max, weapon.range, weapon.cooldown, int(weapon.crit * 100.0)]
