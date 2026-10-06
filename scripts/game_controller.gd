@@ -106,7 +106,7 @@ func _change_region(direction: Vector2i) -> void:
 		zombies.clear()
 		buildings.clear()
 		props.clear()
-		var seed_value := abs(region_coords.x * 73856093 + region_coords.y * 19349663 + 802)
+		var seed_value: int = abs(region_coords.x * 73856093 + region_coords.y * 19349663 + 802)
 		seed(seed_value)
 		for index in range(20):
 			spawn_zombie(Vector2(randi_range(2, GameConfig.MAP_W - 3), randi_range(2, GameConfig.MAP_H - 3)))
