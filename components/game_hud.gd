@@ -173,6 +173,10 @@ func toggle_inventory() -> void:
 func redraw_minimap() -> void:
 	if minimap_view: minimap_view.queue_redraw()
 
+func display_message(text: String) -> void:
+	if mission_label:
+		mission_label.text = "날짜 %d · %s\n%s" % [game.day, text, "파티: 용병 동료" if game.hired else "파티: 혼자 생존 중"]
+
 func refresh() -> void:
 	if not status_label: return
 	status_label.text = "HP %d  기력 %d  ·  %s\n힘 %d  민첩 %d  지능 %d" % [game.hp, int(game.stamina), "달리기" if game.running else "걷기", game.stats["힘"], game.stats["민첩"], game.stats["지능"]]

@@ -70,8 +70,8 @@ func attack() -> void:
 		var offset: Vector2 = game.zombies[i].position - game.hero
 		var distance := offset.length()
 		if distance > float(weapon.range) or distance <= 0.001: continue
-		var zombie_screen := game.map_pixel(game.zombies[i].position) + Vector2(0, -27)
-		var pointer_distance := game.aim_screen.distance_to(zombie_screen)
+		var zombie_screen: Vector2 = game.map_pixel(game.zombies[i].position) + Vector2(0, -27)
+		var pointer_distance: float = game.aim_screen.distance_to(zombie_screen)
 		if pointer_distance < cursor_error:
 			cursor_error = pointer_distance
 			cursor_best = i

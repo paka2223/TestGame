@@ -19,7 +19,7 @@ func _draw() -> void:
 		for x in range(start_x, end_x):
 			var y := depth - x
 			if y < start_y or y >= end_y: continue
-			var center := game.map_pixel(Vector2(x, y))
+			var center: Vector2 = game.map_pixel(Vector2(x, y))
 			var diamond := PackedVector2Array([center + Vector2(0, -8), center + Vector2(16, 0), center + Vector2(0, 8), center + Vector2(-16, 0)])
 			var is_road := x in range(15, 18) or y in range(18, 21)
 			var ground := GameConfig.COLORS.road if is_road else (GameConfig.COLORS.grass if (x + y) % 2 == 0 else GameConfig.COLORS.grass_alt)
@@ -56,7 +56,7 @@ func _draw() -> void:
 	draw_hit_effects()
 	draw_damage_numbers()
 	if game.click_move_active:
-		var marker := game.map_pixel(game.move_target)
+		var marker: Vector2 = game.map_pixel(game.move_target)
 		draw_shadow_ellipse(marker, Vector2(8, 4), Color(0.84, 0.76, 0.46, 0.5))
 		draw_line(marker + Vector2(-8, 0), marker + Vector2(8, 0), Color("e5d192", 0.8), 1)
 
@@ -119,14 +119,14 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 	if player:
 		var weapon: Dictionary = GameConfig.WEAPONS[game.active_weapon]
 		var hand := center + Vector2(7, -24)
-		var swing_progress := 1.0 - clampf(game.swing_timer / SWING_DURATION, 0.0, 1.0)
-		var swing_angle := game.attack_direction.angle() + (lerpf(-0.85, 0.85, swing_progress) if game.swing_timer > 0 else 0.0)
-		var swing_direction := Vector2(cos(swing_angle), sin(swing_angle))
-		var screen_direction := game.project_world(game.hero + swing_direction) - game.project_world(game.hero)
-		var weapon_vector := screen_direction.normalized() * float(weapon.length)
-		var weapon_end := hand + weapon_vector
+		var swing_progress: float = 1.0 - clampf(game.swing_timer / GameConfig.SWING_DURATION, 0.0, 1.0)
+		var swing_angle: float = game.attack_direction.angle() + (lerpf(-0.85, 0.85, swing_progress) if game.swing_timer > 0 else 0.0)
+		var swing_direction: Vector2 = Vector2(cos(swing_angle), sin(swing_angle))
+		var screen_direction: Vector2 = game.project_world(game.hero + swing_direction) - game.project_world(game.hero)
+		var weapon_vector: Vector2 = screen_direction.normalized() * float(weapon.length)
+		var weapon_end: Vector2 = hand + weapon_vector
 		if game.active_weapon == "권총":
-			var gun_tip := hand + weapon_vector
+			var gun_tip: Vector2 = hand + weapon_vector
 			draw_line(hand, gun_tip, Color("272b2a"), 5.0, true)
 			draw_line(hand + Vector2(0, -1), gun_tip + Vector2(0, -1), weapon.color, 2.5, true)
 			draw_line(hand + weapon_vector * 0.38, hand + weapon_vector * 0.18 + Vector2(1, 5), Color("39312a"), 3.0, true)
@@ -145,12 +145,12 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 			draw_line(hand, hand + weapon_vector * 0.45, Color("51443a"), 3)
 			draw_line(hand + weapon_vector * 0.45, weapon_end, weapon.color, 2)
 		if game.swing_timer > 0 and not weapon.ranged:
-			var trail_color := Color(0.93, 0.82, 0.59, clampf(game.swing_timer / SWING_DURATION, 0.0, 1.0) * 0.85)
+			var trail_color := Color(0.93, 0.82, 0.59, clampf(game.swing_timer / GameConfig.SWING_DURATION, 0.0, 1.0) * 0.85)
 			var trail_center := center + Vector2(0, -23)
 			var trail_points := PackedVector2Array()
 			for arc_index in range(9):
-				var angle := swing_angle - 0.46 + 0.92 * float(arc_index) / 8.0
-				var arc_dir := Vector2(cos(angle), sin(angle))
+				var angle: float = swing_angle - 0.46 + 0.92 * float(arc_index) / 8.0
+				var arc_dir: Vector2 = Vector2(cos(angle), sin(angle))
 				trail_points.append(trail_center + (game.project_world(game.hero + arc_dir) - game.project_world(game.hero)).normalized() * float(weapon.length + 6))
 			draw_polyline(trail_points, trail_color, 2.0)
 	if not player:
@@ -183,9 +183,9 @@ func draw_zombie_healthbar(center: Vector2, zombie: Dictionary, runner: bool) ->
 
 func draw_attack_indicator() -> void:
 	var weapon: Dictionary = GameConfig.WEAPONS[game.active_weapon]
-	var center := game.map_pixel(game.hero)
+	var center: Vector2 = game.map_pixel(game.hero)
 	if weapon.ranged:
-		var end_point := game.map_pixel(game.hero + game.attack_direction * float(weapon.range))
+		var end_point: Vector2 = game.map_pixel(game.hero + game.attack_direction * float(weapon.range))
 		if game.shot_timer <= 0: draw_line(center + Vector2(0, -24), end_point + Vector2(0, -24), Color(0.95, 0.82, 0.53, 0.35), 1.0, true)
 		draw_arc(end_point + Vector2(0, -24), 5.0, 0, TAU, 24, Color("f0d28a", 0.8), 1.5, true)
 		if game.shot_timer > 0:
@@ -217,7 +217,7 @@ func draw_damage_numbers() -> void:
 func draw_hit_effects() -> void:
 	for effect in game.hit_effects:
 		var progress := 1.0 - clampf(float(effect.time_left) / 0.28, 0.0, 1.0)
-		var center := game.map_pixel(effect.position) + Vector2(0, -4)
+		var center: Vector2 = game.map_pixel(effect.position) + Vector2(0, -4)
 		var color := Color("ffe194") if effect.critical else Color("f5e7c8")
 		color.a = 1.0 - progress
 		var radius := 5.0 + progress * 11.0
