@@ -49,7 +49,7 @@ func build_ui() -> void:
 	mission_label.add_theme_color_override("font_color", Color("d8d3b9"))
 	ui.add_child(mission_label)
 	var hint := Label.new()
-	hint.text = "우클릭 이동 · 좌클릭 공격\n방향 2초 유지 → 달리기\n4 권총 · 5 활 · R 장전 · Tab 가방"
+	hint.text = "우클릭 이동 · 좌클릭 공격\n방향 2초 유지 → 달리기\n1–5 무기 · R 장전 · H 치료 · Tab 가방"
 	hint.add_theme_font_size_override("font_size", 10)
 	hint.add_theme_color_override("font_color", Color("aeb8a6"))
 	ui.add_child(hint)
@@ -188,5 +188,5 @@ func refresh() -> void:
 			ammo_text = "\n탄창 %d/%d · 예비 %d%s" % [game.ammo_in_mag[game.active_weapon], weapon.magazine, game.ammo_reserve[weapon.ammo], " · 장전 중" if game.reload_timer > 0 else ""]
 		weapon_label.text = "장비: %s  피해 %d-%d\n사거리 %.1f · 치명타 %d%%%s" % [game.active_weapon, weapon.min, weapon.max, weapon.range, int(weapon.crit * 100.0), ammo_text]
 	if inventory_label:
-		inventory_label.text = "보유품\n식량   %d\n고철   %d\n탄약   %d  (탄창 %d)\n화살   %d  (탄창 %d)\n\n장비: %s%s" % [game.food, game.scrap, game.ammo_reserve["탄약"], game.ammo_in_mag["권총"], game.ammo_reserve["화살"], game.ammo_in_mag["활"], game.active_weapon, "\n장전 중" if game.reload_timer > 0 else ""]
+		inventory_label.text = "보유품\n식량   %d\n고철   %d\n의약품   %d (H 사용)\n탄약   %d  (탄창 %d)\n화살   %d  (탄창 %d)\n\n장비: %s%s" % [game.food, game.scrap, game.medkits, game.ammo_reserve["탄약"], game.ammo_in_mag["권총"], game.ammo_reserve["화살"], game.ammo_in_mag["활"], game.active_weapon, "\n장전 중" if game.reload_timer > 0 else ""]
 	display_message(game.message)

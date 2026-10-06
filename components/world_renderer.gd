@@ -8,24 +8,8 @@ func setup(owner: Node) -> void:
 
 func _draw() -> void:
 	var view := get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, view), Color("19221f"))
-	# Inverse isometric projection expands a regular screen viewport into a much wider world rectangle.
+	# Static ground lives in GroundRenderer; only moving actors/effects are redrawn here.
 	var margin := maxf(view.x / GameConfig.TILE, view.y / GameConfig.TILE) * 1.15
-	var start_x := int(game.hero.x - margin)
-	var end_x := int(game.hero.x + margin) + 1
-	var start_y := int(game.hero.y - margin)
-	var end_y := int(game.hero.y + margin) + 1
-	for depth in range(start_x + start_y, end_x + end_y):
-		for x in range(start_x, end_x):
-			var y := depth - x
-			if y < start_y or y >= end_y: continue
-			var center: Vector2 = game.map_pixel(Vector2(x, y))
-			var diamond := PackedVector2Array([center + Vector2(0, -8), center + Vector2(16, 0), center + Vector2(0, 8), center + Vector2(-16, 0)])
-			var is_road := x in range(15, 18) or y in range(18, 21)
-			var ground := GameConfig.COLORS.road if is_road else (GameConfig.COLORS.grass if (x + y) % 2 == 0 else GameConfig.COLORS.grass_alt)
-			draw_colored_polygon(diamond, ground)
-			if is_road and (x + y) % 3 == 0:
-				draw_line(center + Vector2(-2, 0), center + Vector2(3, 0), GameConfig.COLORS.road_line, 1.5)
 	# Sort game.props, landmarks and characters by their depth on the ground plane.
 	# This lets the player walk behind a tree or building instead of always floating on top.
 	var drawables: Array[Dictionary] = []
@@ -43,6 +27,10 @@ func _draw() -> void:
 		var zombie_position: Vector2 = zombie.position
 		if zombie_position.distance_to(game.hero) <= GameConfig.VISION_TILES:
 			drawables.append({"depth": zombie_position.x + zombie_position.y, "type": "zombie", "data": zombie})
+	for drop in game.loot_drops:
+		var drop_position: Vector2 = drop.position
+		if drop_position.distance_to(game.hero) <= GameConfig.VISION_TILES:
+			drawables.append({"depth": drop_position.x + drop_position.y - 0.01, "type": "loot", "data": drop})
 	drawables.append({"depth": game.hero.x + game.hero.y, "type": "hero", "data": game.hero})
 	drawables.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.depth < b.depth)
 	for item in drawables:
@@ -51,6 +39,7 @@ func _draw() -> void:
 			"building": draw_building(item.data)
 			"zombie":
 				draw_character(game.map_pixel(item.data.position), false, item.data.kind, item.data)
+			"loot": draw_loot(game.map_pixel(item.data.position), item.data)
 			"hero": draw_character(game.map_pixel(item.data), true, "", {})
 	draw_attack_indicator()
 	draw_hit_effects()
@@ -59,6 +48,16 @@ func _draw() -> void:
 		var marker: Vector2 = game.map_pixel(game.move_target)
 		draw_shadow_ellipse(marker, Vector2(8, 4), Color(0.84, 0.76, 0.46, 0.5))
 		draw_line(marker + Vector2(-8, 0), marker + Vector2(8, 0), Color("e5d192", 0.8), 1)
+
+func draw_loot(center: Vector2, drop: Dictionary) -> void:
+	var color := Color("b9a36b")
+	match String(drop.kind):
+		"식량": color = Color("9eb86e")
+		"탄약", "화살": color = Color("91a9b3")
+		"의약품": color = Color("d8d0bd")
+	draw_shadow_ellipse(center + Vector2(0, 3), Vector2(7, 3), Color(0.02, 0.025, 0.02, 0.75))
+	draw_colored_polygon(PackedVector2Array([center + Vector2(0, -9), center + Vector2(7, -4), center + Vector2(0, 1), center + Vector2(-7, -4)]), color)
+	draw_string(ThemeDB.fallback_font, center + Vector2(-8, -12), "%d" % int(drop.amount), HORIZONTAL_ALIGNMENT_CENTER, 16, 9, Color("fff0c8"))
 
 func draw_prop(center: Vector2, kind: String) -> void:
 	draw_shadow_ellipse(center + Vector2(0, 5), Vector2(13, 5), Color(0.04, 0.055, 0.05, 0.65))

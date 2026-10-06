@@ -96,6 +96,7 @@ func attack() -> void:
 		game.damage_numbers.append({"position": zombie.position, "amount": amount, "critical": critical, "time_left": 1.0})
 		game.hit_effects.append({"position": zombie.position, "critical": critical, "time_left": 0.28})
 		if zombie.hp <= 0:
+			_drop_loot(zombie.position)
 			game.zombies.remove_at(best)
 			game.gain("힘", 24)
 			game.scrap += 1 + game.stats["힘"]
@@ -112,3 +113,11 @@ func attack() -> void:
 	else:
 		game.say("공격 범위 안에 좀비가 없다. 마우스를 향해 휘둘렀다.")
 	game.update_ui()
+
+func _drop_loot(position: Vector2) -> void:
+	var pool := ["고철", "고철", "식량", "탄약", "화살", "의약품"]
+	var drop_count := 1 + (1 if randf() < 0.18 else 0)
+	for _drop_index in range(drop_count):
+		var kind: String = pool[randi_range(0, pool.size() - 1)]
+		var amount := randi_range(1, 2) if kind in ["고철", "식량", "화살"] else 1
+		game.loot_drops.append({"position": position, "kind": kind, "amount": amount})
