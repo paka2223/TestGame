@@ -389,8 +389,8 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 	if player:
 		var weapon: Dictionary = WEAPONS[active_weapon]
 		var hand := center + Vector2(7, -24)
-	var screen_direction := project_world(hero + attack_direction) - project_world(hero)
-	var weapon_vector := screen_direction.normalized() * float(weapon.length)
+		var screen_direction := project_world(hero + attack_direction) - project_world(hero)
+		var weapon_vector := screen_direction.normalized() * float(weapon.length)
 		var weapon_end := hand + weapon_vector
 		if active_weapon == "각목":
 			draw_line(hand, weapon_end, Color("493a2b"), 5)
