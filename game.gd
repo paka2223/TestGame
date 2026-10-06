@@ -8,10 +8,13 @@ const WALK_SPEED := 1.35
 const RUN_SPEED := 3.2
 const RUN_TRIGGER_SECONDS := 2.0
 const SWING_DURATION := 0.28
+const RELOAD_SECONDS := 1.25
 const WEAPONS := {
-	"부엌칼": {"min": 7, "max": 13, "range": 1.35, "cooldown": 0.34, "crit": 0.12, "crit_mult": 1.8, "length": 10, "color": Color("bbc4c1")},
-	"쇠파이프": {"min": 12, "max": 21, "range": 1.9, "cooldown": 0.58, "crit": 0.08, "crit_mult": 1.7, "length": 16, "color": Color("858e90")},
-	"각목": {"min": 9, "max": 17, "range": 2.25, "cooldown": 0.78, "crit": 0.07, "crit_mult": 2.0, "length": 18, "color": Color("886b4b")}
+	"부엌칼": {"min": 7, "max": 13, "range": 1.35, "cooldown": 0.34, "crit": 0.12, "crit_mult": 1.8, "length": 10, "color": Color("bbc4c1"), "ranged": false},
+	"쇠파이프": {"min": 12, "max": 21, "range": 1.9, "cooldown": 0.58, "crit": 0.08, "crit_mult": 1.7, "length": 16, "color": Color("858e90"), "ranged": false},
+	"각목": {"min": 9, "max": 17, "range": 2.25, "cooldown": 0.78, "crit": 0.07, "crit_mult": 2.0, "length": 18, "color": Color("886b4b"), "ranged": false},
+	"권총": {"min": 18, "max": 31, "range": 9.0, "cooldown": 0.42, "crit": 0.10, "crit_mult": 1.8, "length": 14, "color": Color("5d6260"), "ranged": true, "ammo": "탄약", "magazine": 8},
+	"활": {"min": 12, "max": 23, "range": 7.0, "cooldown": 0.72, "crit": 0.16, "crit_mult": 2.0, "length": 17, "color": Color("856344"), "ranged": true, "ammo": "화살", "magazine": 1}
 }
 const COLORS := {
 	"grass": Color("26362f"), "grass_alt": Color("2b3b33"), "road": Color("343a3a"),
@@ -46,12 +49,26 @@ var hit_effects: Array[Dictionary] = []
 var held_direction := Vector2.ZERO
 var held_direction_time := 0.0
 var running := false
+var run_release_timer := 0.0
 var aim_screen := Vector2.ZERO
+var ammo_reserve := {"탄약": 32, "화살": 16}
+var ammo_in_mag := {"권총": 8, "활": 1}
+var reload_timer := 0.0
+var reloading_weapon := ""
+var shot_timer := 0.0
+var shot_from := Vector2.ZERO
+var shot_to := Vector2.ZERO
+var shot_color := Color.WHITE
+var region_coords := Vector2i.ZERO
+var region_states: Dictionary = {}
 var dark_material: ShaderMaterial
 var status_label: Label
 var mission_label: Label
 var weapon_label: Label
 var minimap_view: Control
+var inventory_panel: PanelContainer
+var inventory_label: Label
+var region_label: Label
 
 func _ready() -> void:
 	seed(802)
@@ -70,6 +87,7 @@ func _ready() -> void:
 		props.append({"p": Vector2(randi_range(1, MAP_W - 2), randi_range(1, MAP_H - 2)), "kind": ["tree", "car", "debris"][randi_range(0, 2)]})
 	make_ui()
 	make_darkness()
+	aim_screen = get_viewport_rect().size * 0.5 + Vector2(100, 0)
 	get_viewport().size_changed.connect(update_camera)
 	update_camera()
 
@@ -79,29 +97,47 @@ func make_ui() -> void:
 	add_child(layer)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(14, 14)
-	panel.custom_minimum_size = Vector2(255, 0)
+	panel.custom_minimum_size = Vector2(226, 0)
 	layer.add_child(panel)
-	var ui := VBoxContainer.new()
-	panel.add_child(ui)
+	var panel_stack := VBoxContainer.new()
+	panel.add_child(panel_stack)
+	var panel_header := HBoxContainer.new()
+	panel_stack.add_child(panel_header)
 	var title := Label.new()
 	title.text = "☠  서울: 마지막 생존자"
 	title.add_theme_color_override("font_color", Color("ebc982"))
-	title.add_theme_font_size_override("font_size", 19)
-	ui.add_child(title)
+	title.add_theme_font_size_override("font_size", 15)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel_header.add_child(title)
+	var fold_button := Button.new()
+	fold_button.text = "접기"
+	fold_button.add_theme_font_size_override("font_size", 10)
+	fold_button.pressed.connect(func(): _toggle_description(fold_button))
+	panel_header.add_child(fold_button)
+	var ui := VBoxContainer.new()
+	ui.add_theme_constant_override("separation", 3)
+	panel_stack.add_child(ui)
 	status_label = Label.new()
+	status_label.add_theme_font_size_override("font_size", 11)
 	ui.add_child(status_label)
+	region_label = Label.new()
+	region_label.add_theme_font_size_override("font_size", 10)
+	ui.add_child(region_label)
 	mission_label = Label.new()
 	mission_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	mission_label.custom_minimum_size.x = 228
+	mission_label.custom_minimum_size.x = 200
+	mission_label.add_theme_font_size_override("font_size", 10)
 	mission_label.add_theme_color_override("font_color", Color("d8d3b9"))
 	ui.add_child(mission_label)
 	var hint := Label.new()
-	hint.text = "우클릭 이동  ·  좌클릭 공격\n같은 방향 2초 유지 → 달리기  ·  E 상호작용"
+	hint.text = "우클릭 이동 · 좌클릭 공격\n방향 2초 유지 → 달리기\n4 권총 · 5 활 · R 장전 · Tab 가방"
+	hint.add_theme_font_size_override("font_size", 10)
 	hint.add_theme_color_override("font_color", Color("aeb8a6"))
 	ui.add_child(hint)
 	for stat in ["힘", "민첩", "지능"]:
 		var button := Button.new()
 		button.text = "%s 경험치: %s   ·   훈련 +1" % [stat, xp[stat]]
+		button.add_theme_font_size_override("font_size", 10)
 		button.pressed.connect(func(): improve(stat))
 		ui.add_child(button)
 	var weapon_row := HBoxContainer.new()
@@ -109,17 +145,51 @@ func make_ui() -> void:
 	for weapon_name in WEAPONS.keys():
 		var button := Button.new()
 		button.text = weapon_name
+		button.add_theme_font_size_override("font_size", 10)
 		button.pressed.connect(func(): equip_weapon(weapon_name))
 		weapon_row.add_child(button)
 	weapon_label = Label.new()
-	weapon_label.add_theme_font_size_override("font_size", 11)
+	weapon_label.add_theme_font_size_override("font_size", 10)
 	weapon_label.add_theme_color_override("font_color", Color("c9c1aa"))
 	ui.add_child(weapon_label)
 	var actions := HBoxContainer.new()
 	ui.add_child(actions)
 	add_button(actions, "파밍 [F]", farm)
 	add_button(actions, "건설 [B]", build)
+	add_button(ui, "인벤토리 [Tab]", toggle_inventory)
 	add_button(ui, "도움말 / 목표", func(): say("서울역·남산타워·시청을 탐험하세요. 어둠 속에서는 빛 안에 들어온 좀비만 보입니다."))
+	for child in ui.get_children():
+		if child is Button: child.add_theme_font_size_override("font_size", 10)
+	inventory_panel = PanelContainer.new()
+	inventory_panel.anchor_left = 0.5
+	inventory_panel.anchor_top = 0.5
+	inventory_panel.anchor_right = 0.5
+	inventory_panel.anchor_bottom = 0.5
+	inventory_panel.offset_left = -180
+	inventory_panel.offset_top = -145
+	inventory_panel.offset_right = 180
+	inventory_panel.offset_bottom = 145
+	inventory_panel.visible = false
+	layer.add_child(inventory_panel)
+	var inventory_stack := VBoxContainer.new()
+	inventory_panel.add_child(inventory_stack)
+	var inventory_title := Label.new()
+	inventory_title.text = "생존자 가방  ·  장비 선택"
+	inventory_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	inventory_title.add_theme_font_size_override("font_size", 16)
+	inventory_stack.add_child(inventory_title)
+	inventory_label = Label.new()
+	inventory_label.add_theme_font_size_override("font_size", 12)
+	inventory_stack.add_child(inventory_label)
+	var inventory_weapons := HBoxContainer.new()
+	inventory_stack.add_child(inventory_weapons)
+	for weapon_name in WEAPONS.keys():
+		var equip_button := Button.new()
+		equip_button.text = weapon_name
+		equip_button.add_theme_font_size_override("font_size", 11)
+		equip_button.pressed.connect(func(): equip_weapon(weapon_name))
+		inventory_weapons.add_child(equip_button)
+	add_button(inventory_stack, "닫기 [Tab]", toggle_inventory)
 	var minimap_frame := PanelContainer.new()
 	minimap_frame.anchor_left = 1.0
 	minimap_frame.anchor_right = 1.0
@@ -183,6 +253,89 @@ func equip_weapon(weapon_name: String) -> void:
 	say("%s 장착 · 사거리 %.2f · 피해 %d–%d" % [active_weapon, weapon.range, weapon.min, weapon.max])
 	update_ui()
 
+func _toggle_description(button: Button) -> void:
+	var details := button.get_parent().get_parent().get_child(1) as Control
+	details.visible = not details.visible
+	button.text = "펼치기" if not details.visible else "접기"
+
+func toggle_inventory() -> void:
+	if not inventory_panel: return
+	inventory_panel.visible = not inventory_panel.visible
+	if inventory_panel.visible: update_ui()
+
+func reload_weapon() -> void:
+	var weapon: Dictionary = WEAPONS[active_weapon]
+	if not weapon.ranged:
+		say("근접 무기는 장전할 필요가 없다.")
+		return
+	if reload_timer > 0:
+		say("장전 중이다.")
+		return
+	var ammo_kind: String = weapon.ammo
+	var current_rounds: int = ammo_in_mag[active_weapon]
+	var missing := int(weapon.magazine) - current_rounds
+	if missing <= 0:
+		say("탄창이 이미 가득 차 있다.")
+		return
+	if ammo_reserve[ammo_kind] <= 0:
+		say("%s이(가) 부족하다. 파밍으로 보충할 수 있다." % ammo_kind)
+		return
+	reload_timer = RELOAD_SECONDS
+	reloading_weapon = active_weapon
+	say("%s 장전 중…" % active_weapon)
+
+func _finish_reload() -> void:
+	if reloading_weapon.is_empty(): return
+	var weapon: Dictionary = WEAPONS[reloading_weapon]
+	var ammo_kind: String = weapon.ammo
+	var missing := int(weapon.magazine) - int(ammo_in_mag[reloading_weapon])
+	var loaded := mini(missing, int(ammo_reserve[ammo_kind]))
+	ammo_in_mag[reloading_weapon] += loaded
+	ammo_reserve[ammo_kind] -= loaded
+	reload_timer = 0.0
+	say("%s 장전 완료 · 탄창 %d발" % [reloading_weapon, ammo_in_mag[reloading_weapon]])
+	reloading_weapon = ""
+	update_ui()
+
+func _region_name() -> String:
+	if region_coords == Vector2i.ZERO: return "서울역 일대"
+	var directions := ""
+	if region_coords.y < 0: directions += "북부 "
+	if region_coords.y > 0: directions += "남부 "
+	if region_coords.x < 0: directions += "서부 "
+	if region_coords.x > 0: directions += "동부 "
+	return "%s폐허 %d-%d구역" % [directions, abs(region_coords.x) + 1, abs(region_coords.y) + 1]
+
+func _change_region(direction: Vector2i) -> void:
+	region_states[region_coords] = {"zombies": zombies.duplicate(true), "buildings": buildings.duplicate(true), "props": props.duplicate(true)}
+	region_coords += direction
+	if region_states.has(region_coords):
+		var saved: Dictionary = region_states[region_coords]
+		zombies = saved.zombies.duplicate(true)
+		buildings = saved.buildings.duplicate(true)
+		props = saved.props.duplicate(true)
+	else:
+		zombies.clear()
+		buildings.clear()
+		props.clear()
+		var seed_value := abs(region_coords.x * 73856093 + region_coords.y * 19349663 + 802)
+		seed(seed_value)
+		for index in range(20):
+			spawn_zombie(Vector2(randi_range(2, MAP_W - 3), randi_range(2, MAP_H - 3)))
+		for index in range(65):
+			props.append({"p": Vector2(randi_range(1, MAP_W - 2), randi_range(1, MAP_H - 2)), "kind": ["tree", "car", "debris"][randi_range(0, 2)]})
+		buildings = [
+			{"p": Vector2(23, 16), "size": Vector2(6, 5), "name": "폐허 구역", "color": Color("4f5550")},
+			{"p": Vector2(randi_range(6, 40), randi_range(6, 28)), "size": Vector2(4, 4), "name": "버려진 건물", "color": Color("655148")}
+		]
+	if direction.x > 0: hero.x = 1.5
+	elif direction.x < 0: hero.x = MAP_W - 2.5
+	if direction.y > 0: hero.y = 1.5
+	elif direction.y < 0: hero.y = MAP_H - 2.5
+	click_move_active = false
+	message = "%s에 진입했다. 구역 가장자리로 이동하면 인접 지역으로 이어진다." % _region_name()
+	update_ui()
+
 func make_darkness() -> void:
 	var shader := Shader.new()
 	shader.code = """
@@ -191,7 +344,7 @@ uniform vec2 light_center = vec2(0.5, 0.5);
 uniform vec2 view_size = vec2(960.0, 600.0);
 uniform float radius_px = 240.0;
 uniform float ambient = 0.18;
-uniform sampler2D screen_texture : hint_screen_texture, filter_nearest;
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
 void fragment() {
 	vec4 scene = texture(screen_texture, SCREEN_UV);
 	vec2 pixel_delta = (SCREEN_UV - light_center) * view_size;
@@ -241,6 +394,10 @@ func _process(delta: float) -> void:
 	bite_cooldown = maxf(0.0, bite_cooldown - delta)
 	attack_cooldown = maxf(0.0, attack_cooldown - delta)
 	swing_timer = maxf(0.0, swing_timer - delta)
+	shot_timer = maxf(0.0, shot_timer - delta)
+	if reload_timer > 0:
+		reload_timer = maxf(0.0, reload_timer - delta)
+		if reload_timer == 0.0: _finish_reload()
 	stamina = minf(100.0, stamina + delta * (3.0 + stats["민첩"] * 0.7))
 	for i in range(damage_numbers.size() - 1, -1, -1):
 		damage_numbers[i].time_left -= delta
@@ -269,10 +426,17 @@ func _process(delta: float) -> void:
 			held_direction = keyboard_move
 		movement = keyboard_move
 	else:
-		running = false
-		held_direction = Vector2.ZERO
-		held_direction_time = 0.0
-	if keyboard_control and stamina > 0:
+		if running:
+			run_release_timer += delta
+			if run_release_timer > 0.22:
+				running = false
+				held_direction = Vector2.ZERO
+				held_direction_time = 0.0
+		else:
+			held_direction = Vector2.ZERO
+			held_direction_time = 0.0
+	if keyboard_control: run_release_timer = 0.0
+	if keyboard_control:
 		click_move_active = false
 	elif click_move_active:
 		var to_target := move_target - hero
@@ -294,9 +458,16 @@ func _process(delta: float) -> void:
 		else:
 			hero += movement * step
 		stamina = maxf(0, stamina - delta * (8.0 if keyboard_control and running else 1.0) / maxf(1, stats["민첩"]))
+	if hero.x < 1.0: _change_region(Vector2i(-1, 0))
+	elif hero.x > MAP_W - 2: _change_region(Vector2i(1, 0))
+	elif hero.y < 1.0: _change_region(Vector2i(0, -1))
+	elif hero.y > MAP_H - 2: _change_region(Vector2i(0, 1))
 	hero.x = clampf(hero.x, 1, MAP_W - 2)
 	hero.y = clampf(hero.y, 1, MAP_H - 2)
 	update_camera()
+	if swing_timer <= 0 and shot_timer <= 0:
+		aim_world = screen_to_world(aim_screen)
+		if not aim_world.is_equal_approx(hero): attack_direction = (aim_world - hero).normalized()
 	if minimap_view: minimap_view.queue_redraw()
 	if sim_clock >= 0.2:
 		var zombie_step := sim_clock
@@ -335,16 +506,27 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			KEY_1: equip_weapon("부엌칼")
 			KEY_2: equip_weapon("쇠파이프")
 			KEY_3: equip_weapon("각목")
+			KEY_4: equip_weapon("권총")
+			KEY_5: equip_weapon("활")
+			KEY_R: reload_weapon()
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+		toggle_inventory()
+		get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		aim_screen = event.position
 		aim_world = screen_to_world(event.position)
+		attack_direction = (aim_world - hero).normalized()
 	elif event is InputEventMouseButton and event.pressed:
 		aim_screen = event.position
 		var world_target := screen_to_world(event.position)
+		aim_world = world_target
+		attack_direction = (aim_world - hero).normalized()
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			move_target = Vector2(clampf(world_target.x, 1, MAP_W - 2), clampf(world_target.y, 1, MAP_H - 2))
+			move_target = Vector2(clampf(world_target.x, 0, MAP_W), clampf(world_target.y, 0, MAP_H))
 			click_move_active = true
 			update_ui()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
@@ -354,17 +536,18 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func screen_to_world(screen_position: Vector2) -> Vector2:
 	var delta := screen_position + camera_at - project_world(hero)
-	return Vector2(delta.x / TILE + delta.y / (TILE * 0.5), delta.y / (TILE * 0.5) - delta.x / TILE)
+	var world_offset := Vector2(delta.x / TILE + delta.y / (TILE * 0.5), delta.y / (TILE * 0.5) - delta.x / TILE)
+	return hero + world_offset
 
 func _draw() -> void:
 	var view := get_viewport_rect().size
 	draw_rect(Rect2(Vector2.ZERO, view), Color("19221f"))
 	# Inverse isometric projection expands a regular screen viewport into a much wider world rectangle.
 	var margin := maxf(view.x / TILE, view.y / TILE) * 1.15
-	var start_x := maxi(0, int(hero.x - margin))
-	var end_x := mini(MAP_W, int(hero.x + margin) + 1)
-	var start_y := maxi(0, int(hero.y - margin))
-	var end_y := mini(MAP_H, int(hero.y + margin) + 1)
+	var start_x := int(hero.x - margin)
+	var end_x := int(hero.x + margin) + 1
+	var start_y := int(hero.y - margin)
+	var end_y := int(hero.y + margin) + 1
 	for depth in range(start_x + start_y, end_x + end_y):
 		for x in range(start_x, end_x):
 			var y := depth - x
@@ -414,10 +597,10 @@ func draw_prop(center: Vector2, kind: String) -> void:
 	draw_shadow_ellipse(center + Vector2(0, 5), Vector2(13, 5), Color(0.04, 0.055, 0.05, 0.65))
 	match kind:
 		"tree":
-			draw_rect(Rect2(center + Vector2(-3, -15), Vector2(7, 19)), Color("443c31"))
-			draw_rect(Rect2(center + Vector2(-10, -26), Vector2(20, 15)), Color("263b31"))
-			draw_rect(Rect2(center + Vector2(-7, -30), Vector2(13, 8)), Color("344a39"))
-			draw_rect(Rect2(center + Vector2(-5, -23), Vector2(4, 4)), Color("526348"))
+			draw_line(center + Vector2(0, -4), center + Vector2(0, -22), Color("443c31"), 6.0, true)
+			draw_circle(center + Vector2(-4, -22), 9.0, Color("263b31"))
+			draw_circle(center + Vector2(4, -25), 8.0, Color("344a39"))
+			draw_circle(center + Vector2(-2, -29), 4.0, Color("526348"))
 		"car":
 			draw_colored_polygon(PackedVector2Array([center + Vector2(-15, -8), center + Vector2(0, -15), center + Vector2(15, -8), center + Vector2(0, -1)]), Color("465351"))
 			draw_rect(Rect2(center + Vector2(-8, -17), Vector2(15, 10)), Color("34413e"))
@@ -454,17 +637,17 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 	draw_shadow_ellipse(center + Vector2(0, 5), Vector2(11, 4), Color(0.025, 0.03, 0.025, 0.9))
 	if player:
 		# Muted workwear, layered cloth, a field pack and small face details read as a survivor at game scale.
-		draw_rect(Rect2(center + Vector2(6, -17), Vector2(5, 10)), Color("443b31"))
-		draw_rect(Rect2(center + Vector2(-6, -17), Vector2(5, 10)), Color("514338"))
+		draw_line(center + Vector2(4, -17), center + Vector2(6, -7), Color("443b31"), 5.0, true)
+		draw_line(center + Vector2(-4, -17), center + Vector2(-6, -7), Color("514338"), 5.0, true)
 		draw_rect(Rect2(center + Vector2(-7, -7), Vector2(6, 5)), Color("242724"))
 		draw_rect(Rect2(center + Vector2(2, -7), Vector2(7, 5)), Color("242724"))
-		draw_rect(Rect2(center + Vector2(-7, -30), Vector2(15, 15)), Color("454c3d"))
-		draw_rect(Rect2(center + Vector2(-9, -29), Vector2(4, 10)), Color("4d4a3a"))
-		draw_rect(Rect2(center + Vector2(7, -29), Vector2(4, 10)), Color("4d4a3a"))
+		draw_shadow_ellipse(center + Vector2(0, -22), Vector2(8, 9), Color("454c3d"))
+		draw_line(center + Vector2(-7, -27), center + Vector2(-9, -19), Color("4d4a3a"), 4.0, true)
+		draw_line(center + Vector2(7, -27), center + Vector2(9, -19), Color("4d4a3a"), 4.0, true)
 		draw_rect(Rect2(center + Vector2(-8, -27), Vector2(3, 5)), Color("777251"))
 		draw_rect(Rect2(center + Vector2(2, -27), Vector2(4, 5)), Color("777251"))
 		draw_rect(Rect2(center + Vector2(-8, -27), Vector2(16, 3)), Color("3d4439"))
-		draw_rect(Rect2(center + Vector2(-7, -38), Vector2(14, 11)), Color("a37b5c"))
+		draw_circle(center + Vector2(0, -32), 7.0, Color("a37b5c"))
 	# Held weapon is angled toward the aiming direction; its length changes with the selected weapon.
 	if player:
 		var weapon: Dictionary = WEAPONS[active_weapon]
@@ -475,7 +658,17 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 		var screen_direction := project_world(hero + swing_direction) - project_world(hero)
 		var weapon_vector := screen_direction.normalized() * float(weapon.length)
 		var weapon_end := hand + weapon_vector
-		if active_weapon == "각목":
+		if active_weapon == "권총":
+			var gun_tip := hand + weapon_vector
+			draw_line(hand, gun_tip, Color("272b2a"), 5.0, true)
+			draw_line(hand + Vector2(0, -1), gun_tip + Vector2(0, -1), weapon.color, 2.5, true)
+			draw_line(hand + weapon_vector * 0.38, hand + weapon_vector * 0.18 + Vector2(1, 5), Color("39312a"), 3.0, true)
+		elif active_weapon == "활":
+			var bow_perpendicular := Vector2(-weapon_vector.y, weapon_vector.x).normalized()
+			var bow_points := PackedVector2Array([hand + bow_perpendicular * 5, hand + weapon_vector * 0.35 + bow_perpendicular * 9, weapon_end + bow_perpendicular * 3, weapon_end - bow_perpendicular * 3, hand + weapon_vector * 0.35 - bow_perpendicular * 9, hand - bow_perpendicular * 5])
+			draw_polyline(bow_points, weapon.color, 3.0, true)
+			draw_line(hand, weapon_end, Color("d8ceb2"), 1.0, true)
+		elif active_weapon == "각목":
 			draw_line(hand, weapon_end, Color("493a2b"), 5)
 			draw_line(hand + Vector2(-1, -1), weapon_end + Vector2(-1, -1), weapon.color, 2)
 		elif active_weapon == "쇠파이프":
@@ -484,7 +677,7 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 		else:
 			draw_line(hand, hand + weapon_vector * 0.45, Color("51443a"), 3)
 			draw_line(hand + weapon_vector * 0.45, weapon_end, weapon.color, 2)
-		if swing_timer > 0:
+		if swing_timer > 0 and not weapon.ranged:
 			var trail_color := Color(0.93, 0.82, 0.59, clampf(swing_timer / SWING_DURATION, 0.0, 1.0) * 0.85)
 			var trail_center := center + Vector2(0, -23)
 			var trail_points := PackedVector2Array()
@@ -497,12 +690,12 @@ func draw_character(center: Vector2, player: bool, zombie_kind: String, zombie_d
 		var runner := zombie_kind == "러너"
 		var shirt := Color("4e493d") if not runner else Color("50453f")
 		var skin := Color("75785d") if not runner else Color("87705b")
-		draw_rect(Rect2(center + Vector2(-4, -16), Vector2(4, 11)), Color("39392f"))
-		draw_rect(Rect2(center + Vector2(2, -16), Vector2(5, 11)), Color("39392f"))
-		draw_rect(Rect2(center + Vector2(-7, -27), Vector2(14, 12)), shirt)
-		draw_rect(Rect2(center + Vector2(-9, -26), Vector2(4, 9)), shirt.darkened(0.16))
-		draw_rect(Rect2(center + Vector2(6, -24), Vector2(4, 10)), shirt.darkened(0.18))
-		draw_rect(Rect2(center + Vector2(-6, -35), Vector2(12, 11)), skin)
+		draw_line(center + Vector2(-3, -16), center + Vector2(-4, -5), Color("39392f"), 4.0, true)
+		draw_line(center + Vector2(3, -16), center + Vector2(4, -5), Color("39392f"), 4.5, true)
+		draw_shadow_ellipse(center + Vector2(0, -22), Vector2(8, 8), shirt)
+		draw_line(center + Vector2(-6, -25), center + Vector2(-9, -18), shirt.darkened(0.16), 4.0, true)
+		draw_line(center + Vector2(6, -25), center + Vector2(9, -18), shirt.darkened(0.18), 4.0, true)
+		draw_circle(center + Vector2(0, -30), 6.2, skin)
 		draw_rect(Rect2(center + Vector2(-7, -36), Vector2(9, 4)), Color("4b493a"))
 		draw_rect(Rect2(center + Vector2(-4, -31), Vector2(2, 2)), Color("2d2925"))
 		draw_rect(Rect2(center + Vector2(3, -32), Vector2(2, 2)), COLORS.blood)
@@ -522,9 +715,17 @@ func draw_zombie_healthbar(center: Vector2, zombie: Dictionary, runner: bool) ->
 	draw_string(ThemeDB.fallback_font, center + Vector2(-25, -47), "%s  %d/%d" % ["RUN" if runner else "ZED", zombie.hp, zombie.max_hp], HORIZONTAL_ALIGNMENT_CENTER, 50, 8, Color("ded4bb"))
 
 func draw_attack_indicator() -> void:
-	if swing_timer <= 0: return
 	var weapon: Dictionary = WEAPONS[active_weapon]
 	var center := map_pixel(hero)
+	if weapon.ranged:
+		var end_point := map_pixel(hero + attack_direction * float(weapon.range))
+		if shot_timer <= 0: draw_line(center + Vector2(0, -24), end_point + Vector2(0, -24), Color(0.95, 0.82, 0.53, 0.35), 1.0, true)
+		draw_arc(end_point + Vector2(0, -24), 5.0, 0, TAU, 24, Color("f0d28a", 0.8), 1.5, true)
+		if shot_timer > 0:
+			var alpha := clampf(shot_timer / 0.16, 0.0, 1.0)
+			draw_line(map_pixel(shot_from) + Vector2(0, -24), map_pixel(shot_to) + Vector2(0, -24), Color(shot_color, alpha), 2.5, true)
+		return
+	if swing_timer <= 0: return
 	var radius: float = float(weapon.range)
 	var base_angle := atan2(attack_direction.y, attack_direction.x)
 	var points := PackedVector2Array([center])
@@ -559,18 +760,26 @@ func draw_hit_effects() -> void:
 
 func draw_shadow_ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
 	var points := PackedVector2Array()
-	for i in range(12):
-		var angle := TAU * float(i) / 12.0
+	for i in range(32):
+		var angle := TAU * float(i) / 32.0
 		points.append(center + Vector2(cos(angle) * radius.x, sin(angle) * radius.y))
 	draw_colored_polygon(points, color)
 
 func attack() -> void:
 	if attack_cooldown > 0: return
 	var weapon: Dictionary = WEAPONS[active_weapon]
+	if weapon.ranged:
+		if reload_timer > 0:
+			say("장전이 끝날 때까지 기다려 주세요.")
+			return
+		if ammo_in_mag[active_weapon] <= 0:
+			say("탄창이 비었다. R 키를 눌러 장전하세요.")
+			return
 	attack_cooldown = float(weapon.cooldown)
-	swing_timer = SWING_DURATION
+	swing_timer = 0.0 if weapon.ranged else SWING_DURATION
 	attack_direction = (aim_world - hero).normalized()
 	if attack_direction == Vector2.ZERO: attack_direction = Vector2.RIGHT
+	if weapon.ranged: ammo_in_mag[active_weapon] -= 1
 	var best := -1
 	var nearest := float(weapon.range)
 	var cursor_best := -1
@@ -590,6 +799,11 @@ func attack() -> void:
 	if cursor_best >= 0:
 		best = cursor_best
 		attack_direction = (zombies[best].position - hero).normalized()
+	if weapon.ranged:
+		shot_from = hero
+		shot_to = zombies[best].position if best >= 0 else hero + attack_direction * float(weapon.range)
+		shot_color = Color("f5d78d") if active_weapon == "권총" else Color("b4d28e")
+		shot_timer = 0.16
 	if best >= 0:
 		var zombie: Dictionary = zombies[best]
 		var amount := randi_range(int(weapon.min), int(weapon.max))
@@ -604,11 +818,15 @@ func attack() -> void:
 			gain("힘", 24)
 			scrap += 1 + stats["힘"]
 			say("%s 좀비 처치 · %d 피해%s · 고철 +%d" % [zombie.kind, amount, " 치명타" if critical else "", 1 + stats["힘"]])
-		else:
+		elif not weapon.ranged:
 			zombie.position += attack_direction * 0.28
 			zombie.hp = maxi(0, zombie.hp)
 			zombies[best] = zombie
 			say("%s 좀비에게 %d 피해%s · 체력 %d/%d" % [zombie.kind, amount, " 치명타" if critical else "", zombie.hp, zombie.max_hp])
+		else:
+			zombie.hp = maxi(0, zombie.hp)
+			zombies[best] = zombie
+			say("%s 명중 · %d 피해%s · 체력 %d/%d" % [zombie.kind, amount, " 치명타" if critical else "", zombie.hp, zombie.max_hp])
 	else:
 		say("공격 범위 안에 좀비가 없다. 마우스를 향해 휘둘렀다.")
 	update_ui()
@@ -620,8 +838,10 @@ func farm() -> void:
 	stamina -= 12
 	food += 1
 	scrap += 1
+	if randf() < 0.35: ammo_reserve["탄약"] += randi_range(1, 4)
+	if randf() < 0.25: ammo_reserve["화살"] += randi_range(1, 3)
 	gain("민첩", 12)
-	say("폐허에서 식량과 고철을 찾았다. 민첩 경험치 +12.")
+	say("폐허 파밍 완료 · 식량 +1, 고철 +1. 탄약이나 화살도 찾았을 수 있다. 민첩 경험치 +12.")
 	update_ui()
 
 func build() -> void:
@@ -676,10 +896,14 @@ func say(text: String) -> void:
 
 func update_ui() -> void:
 	if not status_label: return
-	var role := ""
-	if stats["지능"] >= 3: role = "\n전문: 응급처치·차량수리·건설"
-	status_label.text = "HP %d/100  ·  기력 %d/100\n힘 %d  민첩 %d  지능 %d%s\n%s  ·  식량 %d  고철 %d  좀비 %d" % [hp, int(stamina), stats["힘"], stats["민첩"], stats["지능"], role, "달리기" if running else "걷기", food, scrap, zombies.size()]
+	status_label.text = "HP %d  기력 %d  ·  %s\n힘 %d  민첩 %d  지능 %d" % [hp, int(stamina), "달리기" if running else "걷기", stats["힘"], stats["민첩"], stats["지능"]]
+	if region_label: region_label.text = "%s   [%d, %d]" % [_region_name(), region_coords.x, region_coords.y]
 	if weapon_label:
 		var weapon: Dictionary = WEAPONS[active_weapon]
-		weapon_label.text = "장비: %s  피해 %d-%d\n사거리 %.2fm · 속도 %.2fs · 치명타 %d%%" % [active_weapon, weapon.min, weapon.max, weapon.range, weapon.cooldown, int(weapon.crit * 100.0)]
+		var ammo_text := ""
+		if weapon.ranged:
+			ammo_text = "\n탄창 %d/%d · 예비 %d%s" % [ammo_in_mag[active_weapon], weapon.magazine, ammo_reserve[weapon.ammo], " · 장전 중" if reload_timer > 0 else ""]
+		weapon_label.text = "장비: %s  피해 %d-%d\n사거리 %.1f · 치명타 %d%%%s" % [active_weapon, weapon.min, weapon.max, weapon.range, int(weapon.crit * 100.0), ammo_text]
+	if inventory_label:
+		inventory_label.text = "보유품\n식량   %d\n고철   %d\n탄약   %d  (탄창 %d)\n화살   %d  (탄창 %d)\n\n장비: %s%s" % [food, scrap, ammo_reserve["탄약"], ammo_in_mag["권총"], ammo_reserve["화살"], ammo_in_mag["활"], active_weapon, "\n장전 중" if reload_timer > 0 else ""]
 	say(message)
